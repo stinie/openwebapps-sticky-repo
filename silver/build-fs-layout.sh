@@ -19,6 +19,12 @@ if [ ! -e src/openwebapps-sticky-repo ] ; then
     cd ..
 fi
 
+if [ ! -e src/velruse ] ; then
+    cd src
+    git clone https://github.com/bbangert/velruse.git
+    cd ..
+fi
+
 if [ ! -L app.ini ] ; then
     rm -f app.ini
     ln -s src/openwebapps-sticky-repo/silver/app.ini
