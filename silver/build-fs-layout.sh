@@ -21,7 +21,7 @@ fi
 
 if [ ! -e src/velruse ] ; then
     cd src
-    git clone https://github.com/bbangert/velruse.git
+    git clone git@github.com:ianb/velruse.git
     cd ..
 fi
 
