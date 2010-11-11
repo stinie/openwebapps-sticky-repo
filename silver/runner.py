@@ -1,3 +1,3 @@
-from stickyrepo.wsgiapp import Application
+from stickyrepo.wsgiapp import make_app
 
-application = Application()
+application = make_app()

@@ -1,8 +1,37 @@
 import os
-import yaml
 from webob.dec import wsgify
+from webob import exc
+import webob
 from velruse.app import VelruseApp
 from beaker.middleware import SessionMiddleware
+from silversupport.secret import get_secret
+import urlparse
+import urllib
+import urllib2
+try:
+    import simplejson as json
+except ImportError:
+    import json
+
+
+class Request(webob.Request):
+
+    @property
+    def session(self):
+        return self.environ['beaker.session']
+
+    @property
+    def user_info(self):
+        return self.session.get('auth')
+
+    @user_info.setter
+    def user_info(self, value):
+        self.session['auth'] = value
+        self.session.save()
+
+    @property
+    def userid(self):
+        return self.user_info and self.user_info.get('identifier')
 
 
 class Application(object):
@@ -15,7 +44,7 @@ class Application(object):
                 config = os.path.join(config_dir, name)
                 break
         tmp = os.environ['TEMP']
-        self.velruse_app = VelruseApp(
+        self.auth_app = VelruseApp(
             config,
             {'Store': {
                 'Type': 'SQL',
@@ -26,22 +55,8 @@ class Application(object):
                  'directory': os.path.join(tmp, 'openid'),
                  }
              })
-        with open(config) as fp:
-            config_data = yaml.load(fp.read())
 
-        self.auth_app = SessionMiddleware(
-            self.velruse_app,
-            data_dir=os.path.join(tmp, 'beaker'),
-            lock_dir=os.path.join(tmp, 'beaker.lock'),
-            type='cookie',
-            cookie_expires=False,
-            encrypt_key=config_data['Beaker']['encrypt_key'],
-            validate_key=config_data['Beaker']['validate_key'],
-            # Signs, but does not encrypt the cookie:
-            #secret=get_secret(),
-            )
-
-    @wsgify
+    @wsgify(RequestClass=Request)
     def __call__(self, req):
         if req.path_info_peek() == 'auth':
             req.path_info_pop()
@@ -49,32 +64,56 @@ class Application(object):
         if req.path_info == '/.create-database':
             ## FIXME: and internal check
             return self.create_database(req)
-        return '''
-<form action="/auth/facebook/auth" method="post">
-<input type="hidden" name="end_point" value="http://localhost:8080/success" />
-<input type="hidden" name="scope" value="publish_stream,create_event" />
-<input type="submit" value="Login with Facebook" />
-</form>
-
-<form action="/auth/yahoo/auth" method="post">
-<input type="hidden" name="end_point" value="http://localhost:8080/success" />
-<input type="hidden" name="oauth" value="true" />
-<input type="submit" value="Login with Yahoo" />
-</form>
-
-<form action="/auth/twitter/auth" method="post">
-<input type="hidden" name="end_point" value="http://localhost:8080/success" />
-<input type="submit" value="Login with Twitter" />
-</form>
-
-<form action="/auth/openid/auth" method="post">
-<input type="hidden" name="end_point" value="http://localhost:8080/success" />
-ID: <input type="text" name="openid_identifier" />
-<input type="submit" value="Login with OpenID" />
-</form>
-
-'''
+        if req.path_info == '/success':
+            return self.success(req)
+        if req.path_info == '/logout' or req.path_info == '/logout/':
+            return self.logout(req)
+        if not req.userid:
+            raise exc.HTTPTemporaryRedirect(
+                location='/login/')
+        s = ['<pre>']
+        for key, value in sorted(req.environ.items()):
+            s.append('%s=%r\n' % (key, value))
+        s.append('Session: %r\n' % req.session)
+        s.append('</pre>')
+        return ''.join(s)
 
     def create_database(self, req):
-        self.velruse_app.store.create()
+        self.auth_app.store.create()
         return ''
+
+    def success(self, req):
+        token = req.POST['token']
+        req.session['user_token'] = token
+        dest = urlparse.urljoin(req.url, '/auth/auth_info')
+        api_params = dict(
+            token=token,
+            format='json',
+            )
+        http_response = urllib2.urlopen(dest, urllib.urlencode(api_params))
+        auth_info = json.loads(http_response.read())
+        req.user_info = auth_info['profile']
+        return exc.HTTPFound(location='/')
+
+    def logout(self, req):
+        req.session.delete()
+        came_from = urlparse.urljoin(
+            req.application_url, req.params.get('came_from', '/'))
+        return exc.HTTPFound(location=came_from)
+
+
+def make_app():
+    app = Application()
+    tmp = os.environ['TEMP']
+    app = SessionMiddleware(
+        app,
+        data_dir=os.path.join(tmp, 'beaker'),
+        lock_dir=os.path.join(tmp, 'beaker.lock'),
+        type='cookie',
+        cookie_expires=False,
+        encrypt_key=get_secret(),
+        validate_key=get_secret(),
+        # Signs, but does not encrypt the cookie:
+        #secret=get_secret(),
+        )
+    return app

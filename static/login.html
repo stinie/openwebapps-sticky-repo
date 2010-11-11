@@ -1,0 +1,33 @@
+<html>
+<head>
+<title>Login</title>
+</head>
+
+<body>
+
+<form action="/auth/facebook/auth" method="post">
+<input type="hidden" name="end_point" value="http://localhost:8080/success" />
+<input type="hidden" name="scope" value="publish_stream,create_event" />
+<button type="submit">Login with Facebook</button>
+</form>
+
+<form action="/auth/yahoo/auth" method="post">
+<input type="hidden" name="end_point" value="http://localhost:8080/success" />
+<input type="hidden" name="oauth" value="true" />
+<button type="submit">Login with Yahoo</button>
+</form>
+
+<form action="/auth/twitter/auth" method="post">
+<input type="hidden" name="end_point" value="http://localhost:8080/success" />
+<button type="submit">Login with Twitter</button>
+</form>
+
+<form action="/auth/openid/auth" method="post">
+<input type="hidden" name="end_point" value="http://localhost:8080/success" />
+ID: <input type="text" name="openid_identifier" />
+<button type="submit">Login with OpenID</button>
+</form>
+
+
+</body>
+</html>
