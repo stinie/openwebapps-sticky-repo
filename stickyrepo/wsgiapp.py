@@ -1,10 +1,12 @@
 import os
+import re
 from webob.dec import wsgify
 from webob import exc
 import webob
 from velruse.app import VelruseApp
 from beaker.middleware import SessionMiddleware
 from silversupport.secret import get_secret
+from silversupport.env import is_production
 import urlparse
 import urllib
 import urllib2
@@ -12,6 +14,7 @@ try:
     import simplejson as json
 except ImportError:
     import json
+from stickyrepo.sqlstore import SQLStore
 
 
 class Request(webob.Request):
@@ -55,9 +58,15 @@ class Application(object):
                  'directory': os.path.join(tmp, 'openid'),
                  }
              })
+        self.debug = not is_production()
+        self.store = SQLStore.from_silver()
 
     @wsgify(RequestClass=Request)
     def __call__(self, req):
+        if self.debug and 'X-Testing-User' in req.headers:
+            # Not no save; we don't remember this in a cookie:
+            req.user_info = {'identifier': req.headers['X-Testing-User'],
+                             'displayName': req.headers['X-Testing-User']}
         if req.path_info_peek() == 'auth':
             req.path_info_pop()
             return self.auth_app
@@ -68,9 +77,53 @@ class Application(object):
             return self.success(req)
         if req.path_info == '/logout' or req.path_info == '/logout/':
             return self.logout(req)
+        if req.path_info.rstrip('/') == '/login-status':
+            return self.login_status(req)
         if not req.userid:
             raise exc.HTTPTemporaryRedirect(
                 location='/login/')
+        return self.data_app(req)
+
+    _data_app_re = re.compile(r'/data/(\{.*?\})')
+
+    def data_app(self, req):
+        match = self._data_app_re.match(req.path_info)
+        if not match:
+            return exc.HTTPNotFound()
+        username = match.group(1)
+        rest = req.path_info[match.end():]
+        if req.method == 'DELETE':
+            if not rest:
+                return self.delete_user(req, username)
+            else:
+                return exc.HTTPMethodNotAllowed()
+        elif rest == '/last_updated':
+            return self.user_last_updated(req, username)
+        elif req.method == 'GET':
+            return self.user_data(req, username)
+        elif req.method == 'POST':
+            return self.update_user_data(req, username)
+        else:
+            ## FIXME: not sure this is a good default:
+            return exc.HTTPForbidden()
+
+    def delete_user(self, req, username):
+        self.store.delete_user(username)
+        return exc.HTTPNoContent()
+
+    def user_last_updated(self, req, username):
+        d = {'date': self.store.user_last_updated(username)}
+        return self.json_response(d)
+
+    def user_data(self, req, username):
+        return self.json_response(self.store.user_data(username))
+
+    def update_user_data(self, req, username):
+        body = json.loads(req.body)
+        self.store.update_user_data(username, body)
+        return exc.HTTPNoContent()
+
+    def debug_app(self, req):
         s = ['<pre>']
         for key, value in sorted(req.environ.items()):
             s.append('%s=%r\n' % (key, value))
@@ -80,6 +133,7 @@ class Application(object):
 
     def create_database(self, req):
         self.auth_app.store.create()
+        self.store.create()
         return ''
 
     def success(self, req):
@@ -101,6 +155,16 @@ class Application(object):
             req.application_url, req.params.get('came_from', '/'))
         return exc.HTTPFound(location=came_from)
 
+    def login_status(self, req):
+        return self.json_response(req.user_info)
+
+    def json_response(self, data, **kw):
+        if not isinstance(data, basestring):
+            data = json.dumps(data)
+        return webob.Response(
+            data,
+            content_type='application/json',
+            **kw)
 
 def make_app():
     app = Application()
