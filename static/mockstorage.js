@@ -1,28 +1,45 @@
 function MemoryStorage() {
   var self = {};
   self._storage = {};
+  self._storageObjs = {};
   self.open = function (objType) {
-    return MemoryStorage.ObjectStorage(self._storage, objType);
+    if (! (objType in self._storageObjs)) {
+      self._storageObjs[objType] = MemoryStorage.ObjectStorage(self, objType);
+    }
+    return self._storageObjs[objType];
   };
+  self.toString = function () {
+    return 'MemoryStorage()';
+  };
+  EventMixin(self);
   return self;
 }
 
-MemoryStorage.ObjectStorage = function (storage, objType) {
+MemoryStorage.ObjectStorage = function (storageObj, objType) {
   var self = {};
-  self._storage = storage;
+  self._storageObj = storageObj;
+  self._storage = storageObj._storage;
   self._listeners = {};
+  self._objType = objType;
+
+  self.toString = function () {
+    return "MemoryStorage().open('"+objType+"')";
+  };
 
   self.get = function (key) {
     return self._storage[key];
   };
 
   self.put = function (key, value) {
-    var canceled = ! self.dispatchEvent('change', {target: key});
+    var canceled = ! self._storageObj.dispatchEvent('change', 
+		         {eventType: 'change', storageType: self, 
+                          target: key, value: value});
     self._storage[key] = value;
   };
 
   self.remove = function (key) {
-    var canceled = ! self.dispatchEvent('delete', {target: key});
+    var canceled = ! self._storageObj.dispatchEvent('delete', 
+		         {eventType: 'delete', storageType: self, target: key});
     if (! canceled) {
       delete self._storage[key];
     }
@@ -48,39 +65,6 @@ MemoryStorage.ObjectStorage = function (storage, objType) {
         return;
       }
     }
-  };
-
-  self.addEventListener = function (event, callback) {
-    if (! event in self._listeners) {
-      self._listeners[event] = [];
-    }
-    self._listeners.push(callback);
-  };
-
-  self.removeEventListener = function (event, callback) {
-    if (! event in self._listeners) {
-      return;
-    }
-    for (var i=0; i<self._listeners[event].length; i++) {
-      if (self._listeners[event][i] === callback) {
-        self._listeners.splice(i, 1);
-        return;
-      }
-    }
-  };
-
-  self.dispatchEvent = function (name, event) {
-    // FIXME: This isn't quite right...
-    if (! name in self._listeners) {
-      return true;
-    }
-    var result = true;
-    for (var i=0; i<self._listeners.length; i++) {
-      if (self._listeners[i](event) === false) {
-        result = false;
-      }
-    }
-    return result;
   };
 
   return self;

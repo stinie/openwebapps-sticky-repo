@@ -15,6 +15,7 @@ try:
 except ImportError:
     import json
 from stickyrepo.sqlstore import SQLStore
+import time
 
 
 class Request(webob.Request):
@@ -63,10 +64,13 @@ class Application(object):
 
     @wsgify(RequestClass=Request)
     def __call__(self, req):
+        req.server_timestamp = time.time()
         if self.debug and 'X-Testing-User' in req.headers:
             # Not no save; we don't remember this in a cookie:
             req.user_info = {'identifier': req.headers['X-Testing-User'],
                              'displayName': req.headers['X-Testing-User']}
+        if self.debug and req.path_info == '/.reset-time':
+            return self.set_time(req)
         if req.path_info_peek() == 'auth':
             req.path_info_pop()
             return self.auth_app
@@ -82,9 +86,17 @@ class Application(object):
         if not req.userid:
             raise exc.HTTPTemporaryRedirect(
                 location='/login/')
-        return self.data_app(req)
+        resp = self.data_app(req)
+        resp.headers['X-Server-Timestamp'] = '%.3f' % req.server_timestamp
+        return resp
 
-    _data_app_re = re.compile(r'/data/(\{.*?\})')
+    def set_time(self, req):
+        import itertools
+        new_time = itertools.count(1).next
+        time.time = new_time
+        return exc.HTTPNoContent();
+
+    _data_app_re = re.compile(r'/data/\{(.*?)\}')
 
     def data_app(self, req):
         match = self._data_app_re.match(req.path_info)
@@ -92,6 +104,8 @@ class Application(object):
             return exc.HTTPNotFound()
         username = match.group(1)
         rest = req.path_info[match.end():]
+        if username != req.userid:
+            return exc.HTTPForbidden()
         if req.method == 'DELETE':
             if not rest:
                 return self.delete_user(req, username)
@@ -116,6 +130,12 @@ class Application(object):
         return self.json_response(d)
 
     def user_data(self, req, username):
+        last_time = self.store.user_last_updated(username)
+        if last_time:
+            last_time = time.mktime(last_time.timetuple())
+        n = float(req.headers.get('X-If-Modified-Since-Timestamp', 0))
+        if last_time and n and n <= last_time:
+            return exc.HTTPNotModified()
         return self.json_response(self.store.user_data(username))
 
     def update_user_data(self, req, username):
