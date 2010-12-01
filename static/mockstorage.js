@@ -34,7 +34,9 @@ MemoryStorage.ObjectStorage = function (storageObj, objType) {
     var canceled = ! self._storageObj.dispatchEvent('change', 
 		         {eventType: 'change', storageType: self, 
                           target: key, value: value});
-    self._storage[key] = value;
+    if (! canceled) {
+      self._storage[key] = value;
+    }
   };
 
   self.remove = function (key) {
