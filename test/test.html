@@ -4,6 +4,7 @@
 <script type="text/javascript" src="doctestjs/doctest.js"></script>
 <link rel="stylesheet" type="text/css" href="doctestjs/doctest.css" />
 <script type="text/javascript" src="/static/sync.js"></script>
+<script type="text/javascript" src="/static/mockstorage.js"></script>
 <!-- FIXME: jQuery should be removed: -->
 <script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.4.4/jquery.js"></script>
 <style type="text/css">
@@ -26,12 +27,17 @@ handler).
 </p>
 
 <p>For testing we'll call a special method to clear the repo for the
-user.  (Should this be something only enabled in a testing environment?)
+user.  (Should this be something only enabled in a testing
+environment?  Eh, there are valid reasons to clear everything, though
+it won't persist since any client can unclear things based on their
+local repo.)
 </p>
 
-<pre class="doctest">
-$ sync = Sync({
+<pre class="doctest setup">
+$ function make_sync(storage) {
+> return Sync({
 >   url: '/',
+>   // I'm wondering if this stuff could be done with events:
 >   addHeaders: {'X-Testing-User': 'test'},
 >   forceUser: 'test',
 >   beforeSend: function (req) {
@@ -44,10 +50,43 @@ $ sync = Sync({
 >       s += ' for url '+req.url;
 >       s += ' status: ' + req.status + ' ' + req.statusText;
 >     }
->     writeln('Error: ', s);}
+>     writeln('Error: ', s);
+>   },
+>   storage: storage
 > });
-$ sync.clear({success: Spy('clear', {wait: true})});
-...clear()
+> }
+$ storage1 = MemoryStorage();
+$ storage1.name = '1';
+$ storage2 = MemoryStorage();
+$ storage2.name = '2';
+$ function showStorageOperations(event) {
+>   var eventType = event.eventType;
+>   if (eventType == 'change' && ! (event.storageType.has(event.target))) {
+>     eventType = 'add';
+>   }
+>   writeln(event.storageType._storageObj.name + '::'
+>           + event.storageType._objType + '::'
+>           + event.target + ' ' + eventType);
+>   if (event.eventType == 'change') {
+>     writeln('  -> ' + repr(event.value));
+>   }
+> }
+$ sync1 = make_sync(storage1);
+$ sync2 = make_sync(storage2);
+$ storage1.addEventListener('delete', showStorageOperations);
+$ storage1.addEventListener('change', showStorageOperations);
+$ storage2.addEventListener('delete', showStorageOperations);
+$ storage2.addEventListener('change', showStorageOperations);
+$ // We don't have to clear both sync servers, of course:
+> sync1.clearServer({success: Spy('clearServer', {wait: true})});
+...clearServer()
+$ function successor() {
+>   return {success: Spy('success', {writes: false, wait: true})};
+> }
+$ $.ajax({
+>   url: '/.reset-time',
+>   success: Spy('success', {writes: false, wait: true})
+> });
 </pre>
 
 </div>
@@ -58,48 +97,93 @@ $ sync.clear({success: Spy('clear', {wait: true})});
 <pre class="doctest">
 $ // Is it weird that this uses a callback?
 > // It won't necessarily need a callback.
-$ sync.isLoggedIn({success: Spy('isLoggedIn', {wait: true})});
+> // Maybe we'll actually need synchronous access to the userid
+> // anyway, as we construct URLs based on it.
+$ sync1.isLoggedIn({success: Spy('isLoggedIn', {wait: true})});
 ...isLoggedIn(true)
-$ sync.loginStatus({success: Spy('loginStatus', {wait: true})});
+$ sync1.loginStatus({success: Spy('loginStatus', {wait: true})});
 ...loginStatus({displayName: "test"...})
 </pre>
 
 </div>
 
-<div class="test">
-<p>Then with the sync object in hand, we want some manifests of our
-own to play with.</p>
+<div class="test"> <p>Then with the sync and storage objects in hand,
+we want some manifests of our own to play with.</p>
 
 <pre class="doctest">
-$ manifests = {
->   lastUpdated: null,
->   installed: [
->     {uuid: "1",
->      updated: null,
->      manifest: {}
->     },
->     {uuid: "2",
->      updated: null,
->      manifest: {}
->     }
->   ]
-> };
-$ sync.lastUpdated({success: Spy('lastUpdated', {wait: true})});
-...lastUpdated(...:...:...)
-$ sync.fetchUpdates({success: Spy('fetchUpdates', {wait: true})});
-fetchUpdates(404 Not Found)
-$ sync.pushManifests({
->   manifests: manifests,
->   success: Spy('pushManifests', {wait: true})
+$ apps1 = storage1.open('app');
+$ apps1.put('http://foo.com', {
+>   base_url: 'http://foo.com'
 > });
-pushManifests()
-$ sync.pullManifests({
->   existingManifests: manifests,
->   success: Spy('pullManifests', {wait: true})
+1::app::http://foo.com add
+  -> {base_url: "http://foo.com"}
+$ writeln(apps1._storage);
+{http://foo.com: {base_url: "http://foo.com"}}
+$ sync1.pull(successor());
+1::sync::sync add
+  -> {lastPull: ?}
+$ writeln(storage1.open('sync').get('sync'));
+{lastPull: ?}
+$ sync1.pull(successor());
+1::sync::sync change
+  -> {lastPull: ?}
+$ sync2.pull(successor());
+2::sync::sync add
+  -> {lastPull: ?}
+$ writeln(storage2.open('sync').get('sync'));
+{lastPull: ?}
+$ apps2 = storage2.open('app');
+$ apps2.put('http://bar.com', {
+>   base_url: 'http://bar.com'
 > });
-pullManifests()
-$ manifests
-?
+2::app::http://bar.com add
+  -> {base_url: "http://bar.com"}
+$ sync2.pull(successor());
+2::sync::sync change
+  -> {lastPull: ?}
+$ apps1.remove('http://foo.com');
+1::app::http://foo.com delete
+$ storage1.open('deletedapp').put('http://foo.com', {});
+1::deletedapp::http://foo.com add
+  -> {}
+$ sync1.push(successor());
+1::app::sync change
+  -> {lastPull: ?, lastPush: ?}
+1::app::http://foo.com change
+  -> {lastPush: ?}
+1::deletedapp::sync change
+  -> {lastPull: ?, lastPush: ?}
+1::deletedapp::http://foo.com change
+  -> {lastPush: ?}
+1::sync::sync change
+  -> undefined
+$ sync2.pull(successor());
+2::deletedapps::http://foo.com add
+  -> {}
+2::sync::sync change
+  -> {lastPull: ?}
+$ sync2.push(successor());
+2::app::sync change
+  -> {lastPull: ?, lastPush: ?}
+2::app::http://bar.com change
+  -> {base_url: "http://bar.com", lastPush: ?}
+2::app::http://foo.com change
+  -> {lastPush: ?}
+2::deletedapp::sync change
+  -> {lastPull: ?, lastPush: ?}
+2::deletedapp::http://bar.com change
+  -> {base_url: "http://bar.com", lastPush: ?}
+2::deletedapp::http://foo.com change
+  -> {lastPush: ?}
+2::sync::sync change
+  -> undefined
+$ sync1.pull(successor());
+1::deletedapps::http://bar.com add
+  -> {base_url: "http://bar.com"}
+1::deletedapps::sync change
+  -> {lastPull: ?}
+1::sync::sync change
+  -> {lastPull: ?}
 </pre>
 
 </div>
