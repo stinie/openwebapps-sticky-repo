@@ -18,7 +18,10 @@ function MemoryStorage() {
 MemoryStorage.ObjectStorage = function (storageObj, objType) {
   var self = {};
   self._storageObj = storageObj;
-  self._storage = storageObj._storage;
+  if (! (objType in storageObj._storage)) {
+    storageObj._storage[objType] = {};
+  }
+  self._storage = storageObj._storage[objType];
   self._listeners = {};
   self._objType = objType;
 
@@ -27,10 +30,20 @@ MemoryStorage.ObjectStorage = function (storageObj, objType) {
   };
 
   self.get = function (key) {
-    return self._storage[key];
+    var obj = self._storage[key];
+    // To be accurate, all objects will be copies...
+    if (typeof obj == 'object') {
+      // Only actual objects can/should be copied
+      return JSON.parse(JSON.stringify(obj));
+    } else {
+      return obj;
+    }
   };
 
   self.put = function (key, value) {
+    if (value === undefined) {
+      throw 'You cannot set a key to undefined';
+    }
     var canceled = ! self._storageObj.dispatchEvent('change', 
 		         {eventType: 'change', storageType: self, 
                           target: key, value: value});
