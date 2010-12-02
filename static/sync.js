@@ -98,7 +98,7 @@ function Sync(options) {
         }
         // FIXME: I should check for Not Modified
         s.lastPull = parseFloat(req.getResponseHeader('X-Server-Timestamp'));
-        mergeManifests(result);
+        mergeManifests(result, s.lastPull);
         saveSyncer(s);
         if (options.success) {
           options.success.call(window);
@@ -121,7 +121,7 @@ function Sync(options) {
         s.lastPush = timestamp;
         updatePushTimes('app', timestamp);
         updatePushTimes('deletedapp', timestamp);
-        saveSyncer();
+        saveSyncer(s);
         if (options.success) {
           options.success.call(window);
         }
@@ -146,11 +146,14 @@ function Sync(options) {
     return result;
   };
 
-  function mergeManifests(retrieved) {
-    var apps = self.storage.open('apps');
-    var deleted = self.storage.open('deletedapps');
+  function mergeManifests(retrieved, timestamp) {
+    // FIXME: I'm not sure the timestamp is the right thing to use here.
+    // Should the server set these values itself?  Or... the client?
+    var apps = self.storage.open('app');
+    var deleted = self.storage.open('deletedapp');
     if (retrieved.deleted) {
       for (var i in retrieved.deleted) {
+        retrieved.deleted[i].lastPull = retrieved.deleted[i].lastPush = timestamp;
         var app = apps.get(i);
         if (app === undefined) {
           deleted.put(i, retrieved.deleted[i]);
@@ -164,6 +167,7 @@ function Sync(options) {
       }
     }
     for (i in retrieved.installed) {
+      retrieved.installed[i].lastPull = retrieved.installed[i].lastPush = timestamp;
       var app = apps.get(i);
       if (app === undefined) {
         apps.put(i, retrieved.installed[i]);
@@ -181,6 +185,9 @@ function Sync(options) {
     var keys = objs.keys();
     for (var i=0; i<keys.length; i++) {
       var app = objs.get(keys[i]);
+      if (! app) {
+        continue;
+      }
       app.lastPush = time;
       objs.put(keys[i], app);
     }

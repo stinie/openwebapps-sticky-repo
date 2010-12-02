@@ -41,7 +41,6 @@ $ function make_sync(storage) {
 >   addHeaders: {'X-Testing-User': 'test'},
 >   forceUser: 'test',
 >   beforeSend: function (req) {
->     console.log('hey there');
 >     writeln(req.method + ' ' + req.url);
 >   },
 >   error: function (req) {
@@ -61,14 +60,20 @@ $ storage2 = MemoryStorage();
 $ storage2.name = '2';
 $ function showStorageOperations(event) {
 >   var eventType = event.eventType;
->   if (eventType == 'change' && ! (event.storageType.has(event.target))) {
+>   var orig = event.storageType.get(event.target);
+>   if (eventType == 'change' && orig === undefined) {
 >     eventType = 'add';
+>   }
+>   if (eventType == 'change' && doctest.objectsEqual(orig, event.value)) {
+>     eventType = 'nochange';
 >   }
 >   writeln(event.storageType._storageObj.name + '::'
 >           + event.storageType._objType + '::'
 >           + event.target + ' ' + eventType);
->   if (event.eventType == 'change') {
->     writeln('  -> ' + repr(event.value));
+>   if (eventType == 'change') {
+>     doctest.writeDiff(event.storageType.get(event.target), event.value, '  ');
+>   } else if (eventType == 'add') {
+>     writeln('  ', repr(event.value));
 >   }
 > }
 $ sync1 = make_sync(storage1);
@@ -116,74 +121,100 @@ $ apps1.put('http://foo.com', {
 >   base_url: 'http://foo.com'
 > });
 1::app::http://foo.com add
-  -> {base_url: "http://foo.com"}
+  {base_url: "http://foo.com"}
 $ writeln(apps1._storage);
 {http://foo.com: {base_url: "http://foo.com"}}
-$ sync1.pull(successor());
+$ // As you'll see, there's nothing to pull yet, though we did update the syncer:
+> sync1.pull(successor());
 1::sync::sync add
-  -> {lastPull: ?}
-$ writeln(storage1.open('sync').get('sync'));
-{lastPull: ?}
-$ sync1.pull(successor());
+  {lastPull: ?}
+$ // Only the date will be updated 
+> sync1.pull(successor());
 1::sync::sync change
-  -> {lastPull: ?}
-$ sync2.pull(successor());
+  lastPull: ? -> ?
+$ // a sequence of such boring polls one is unlike to see...
+> sync2.pull(successor());
 2::sync::sync add
-  -> {lastPull: ?}
+  {lastPull: ?}
 $ writeln(storage2.open('sync').get('sync'));
 {lastPull: ?}
-$ apps2 = storage2.open('app');
+
+$ // Now we will actually write something to the sync
+> // in particular, the app we added earlier:
+> sync1.push(successor())
+1::app::http://foo.com change
+  +lastPush: ?
+1::sync::sync change
+  +lastPush: ?
+$ // And then pull it from the server to our other store:
+> sync2.pull(successor())
+2::app::http://foo.com add
+  {base_url: "http://foo.com", lastPull: ?, lastPush: ?}
+2::sync::sync change
+  lastPull: ? -> ?
+$ // Now we'll add an app to our second store:
+> apps2 = storage2.open('app');
 $ apps2.put('http://bar.com', {
 >   base_url: 'http://bar.com'
 > });
 2::app::http://bar.com add
-  -> {base_url: "http://bar.com"}
-$ sync2.pull(successor());
+  {base_url: "http://bar.com"}
+$ // Pulling shouldn't do anything interesting:
+> sync2.pull(successor());
 2::sync::sync change
-  -> {lastPull: ?}
-$ apps1.remove('http://foo.com');
+  lastPull: ? -> ?
+$ // Now we'll push the new app:
+> sync2.push(successor())
+2::app::http://foo.com change
+  lastPush: ? -> ?
+2::app::http://bar.com change
+  +lastPush: ?
+2::sync::sync change
+  +lastPush: ?
+$ // Next we'll do a delete on the side of 1:
+> apps1.remove('http://foo.com');
 1::app::http://foo.com delete
 $ storage1.open('deletedapp').put('http://foo.com', {});
 1::deletedapp::http://foo.com add
-  -> {}
+  {}
 $ sync1.push(successor());
-1::app::sync change
-  -> {lastPull: ?, lastPush: ?}
-1::app::http://foo.com change
-  -> {lastPush: ?}
-1::deletedapp::sync change
-  -> {lastPull: ?, lastPush: ?}
 1::deletedapp::http://foo.com change
-  -> {lastPush: ?}
+  +lastPush: ?
 1::sync::sync change
-  -> undefined
-$ sync2.pull(successor());
-2::deletedapps::http://foo.com add
-  -> {}
+  lastPush: ? -> ?
+$ // Now we'll re-pull, which will update
+> // timestamps, but not pull bar.com (we wiped it)
+> sync1.pull(successor());
+1::deletedapp::http://foo.com change
+  +lastPull: ?
+  lastPush: ? -> ?
+1::sync::sync change
+  lastPull: ? -> ?
+$ // Now we'll pull the delete
+> // note sync1 never pulled bar.com but that should have no effect
+> sync2.pull(successor());
 2::sync::sync change
-  -> {lastPull: ?}
-$ sync2.push(successor());
-2::app::sync change
-  -> {lastPull: ?, lastPush: ?}
-2::app::http://bar.com change
-  -> {base_url: "http://bar.com", lastPush: ?}
+  lastPull: ? -> ?
+$ // Next sync2 will push its change, which will include the new app
+> sync2.push(successor());
 2::app::http://foo.com change
-  -> {lastPush: ?}
-2::deletedapp::sync change
-  -> {lastPull: ?, lastPush: ?}
-2::deletedapp::http://bar.com change
-  -> {base_url: "http://bar.com", lastPush: ?}
-2::deletedapp::http://foo.com change
-  -> {lastPush: ?}
+  lastPush: ? -> ?
+2::app::http://bar.com change
+  lastPush: ? -> ?
 2::sync::sync change
-  -> undefined
+  lastPush: ? -> ?
 $ sync1.pull(successor());
-1::deletedapps::http://bar.com add
-  -> {base_url: "http://bar.com"}
-1::deletedapps::sync change
-  -> {lastPull: ?}
+1::app::http://foo.com add
+  {base_url: "http://foo.com", lastPull: ?, lastPush: ?} 
+1::app::http://bar.com add
+  {base_url: "http://bar.com", lastPull: ?, lastPush: ?} 
 1::sync::sync change
-  -> {lastPull: ?}
+  lastPull: ? -> ?
+
+$ // Still to test: adding and deleting apps out of sync, but with
+> // an interesting order (add app1 to store1, add app2 to store2,
+> // delete app1 from store1, sync store2 which should not eliminate
+> // app2... or maybe it should?)
 </pre>
 
 </div>
