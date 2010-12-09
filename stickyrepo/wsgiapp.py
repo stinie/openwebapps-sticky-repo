@@ -162,21 +162,23 @@ class Application(object):
         match = self._data_app_re.match(req.path_info)
         if not match:
             return exc.HTTPNotFound()
-        username = match.group(1)
+        username = urllib.unquote(match.group(1))
         rest = req.path_info[match.end():]
+        rest = rest.strip('/')
         if username != req.userid:
             return exc.HTTPForbidden()
         if req.method == 'DELETE':
             if not rest:
                 return self.delete_user(req, username)
             else:
-                return exc.HTTPMethodNotAllowed()
-        elif rest == '/last_updated':
-            return self.user_last_updated(req, username)
+                return self.delete_user_data(req, username, rest)
+        elif rest.endswith('/last_updated'):
+            type = rest[:-len('/last_updated')]
+            return self.user_last_updated(req, username, type)
         elif req.method == 'GET':
-            return self.user_data(req, username)
+            return self.user_data(req, username, rest)
         elif req.method == 'POST':
-            return self.update_user_data(req, username)
+            return self.update_user_data(req, username, rest)
         else:
             ## FIXME: not sure this is a good default:
             return exc.HTTPForbidden()
@@ -185,22 +187,26 @@ class Application(object):
         self.store.delete_user(username)
         return exc.HTTPNoContent()
 
-    def user_last_updated(self, req, username):
-        d = {'date': self.store.user_last_updated(username)}
+    def delete_user_data(self, req, username, type):
+        self.store.delete_user_data(username, type)
+        return exc.HTTPNoContent()
+
+    def user_last_updated(self, req, username, type):
+        d = {'date': self.store.user_last_updated(username, type)}
         return self.json_response(d)
 
-    def user_data(self, req, username):
-        last_time = self.store.user_last_updated(username)
+    def user_data(self, req, username, type):
+        last_time = self.store.user_last_updated(username, type)
         if last_time:
             last_time = time.mktime(last_time.timetuple())
         n = float(req.headers.get('X-If-Modified-Since-Timestamp', 0))
         if last_time and n and n <= last_time:
             return exc.HTTPNotModified()
-        return self.json_response(self.store.user_data(username))
+        return self.json_response(self.store.user_data(username, type))
 
-    def update_user_data(self, req, username):
+    def update_user_data(self, req, username, type):
         body = json.loads(req.body)
-        self.store.update_user_data(username, body)
+        self.store.update_user_data(username, type, body)
         return exc.HTTPNoContent()
 
     def debug_app(self, req):

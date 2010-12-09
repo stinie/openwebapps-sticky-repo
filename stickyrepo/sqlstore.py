@@ -16,6 +16,7 @@ SQLBase = declarative_base()
 class UserStorage(SQLBase):
     __tablename__ = 'sync_storage'
     userid = Column(String(255), primary_key=True, nullable=False)
+    type = Column(Text(), nullable=False)
     data = Column(Text(), nullable=False)
     last_updated = Column(DateTime())
 
@@ -31,36 +32,45 @@ class SQLStore(AbstractStore):
             delete(UserStorage.__table__,
                    UserStorage.__table__.c.userid == username))
 
-    def user_last_updated(self, username):
+    def delete_user_data(self, username, type):
+        self.engine.execute(
+            delete(UserStorage.__table__,
+                   (UserStorage.__table__.c.userid == username)
+                   & (UserStorage.__table__.c.type == type)))
+
+    def user_last_updated(self, username, type):
         res = self.engine.execute(
             select([UserStorage.__table__.c.last_updated],
-                   UserStorage.__table__.c.userid == username))
+                   (UserStorage.__table__.c.userid == username)
+                   & (UserStorage.__table__.c.type == type)))
         res = res.fetchone()
         if res is None:
             return None
         return res[0]
 
-    def user_data(self, username):
+    def user_data(self, username, type):
         res = self.engine.execute(
             select([UserStorage.__table__.c.data,
                     UserStorage.__table__.c.last_updated],
-                   UserStorage.__table__.c.userid == username))
+                   (UserStorage.__table__.c.userid == username)
+                   & (UserStorage.__table__.c.type == type)))
         res = res.fetchone()
         if res is None:
             return None
         ## FIXME: integrate last_updated somehow?
         return json.loads(res[0])
 
-    def update_user_data(self, username, new_data):
+    def update_user_data(self, username, type, new_data):
         new_data = json.dumps(new_data)
         res = self.engine.execute(
-            UserStorage.__table__.update(UserStorage.__table__.c.userid == username),
+            UserStorage.__table__.update((UserStorage.__table__.c.userid == username) & (UserStorage.__table__.c.type == type)),
             data=new_data,
             last_updated=func.now())
         if not res.rowcount:
             self.engine.execute(
                 UserStorage.__table__.insert(),
                 userid=username,
+                type=type,
                 data=new_data,
                 last_updated=func.now())
 
