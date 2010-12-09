@@ -16,6 +16,10 @@ except ImportError:
     import json
 from stickyrepo.sqlstore import SQLStore
 import time
+import string
+import hashlib
+import hmac
+import random
 
 
 class Request(webob.Request):
@@ -24,18 +28,64 @@ class Request(webob.Request):
     def session(self):
         return self.environ['beaker.session']
 
+    _force_user_info = None
+
     @property
     def user_info(self):
-        return self.session.get('auth')
+        if self._force_user_info:
+            return self._force_user_info
+        value = self.cookies.get('user_info')
+        if not value:
+            return None
+        value = check_value(value)
+        if not value:
+            return None
+        value = json.loads(value)
+        return value
 
     @user_info.setter
     def user_info(self, value):
-        self.session['auth'] = value
-        self.session.save()
+        self._force_user_info = value
 
     @property
     def userid(self):
         return self.user_info and self.user_info.get('identifier')
+
+
+def set_user_info(resp, value):
+    value = json.dumps(value)
+    cookie = sign_value(value)
+    resp.set_cookie('user_info', cookie)
+
+
+def create_salt(length=12):
+    chars = string.ascii_letters + string.digits
+    ## FIXME: os.urandom?
+    return ''.join(
+        random.choice(chars) for i in range(length))
+
+
+def sign_value(value, secret=get_secret()):
+    salt = create_salt()
+    hash = hash_signature(salt, value, secret)
+    data = urllib.quote(value, '')
+    return data + '|' + salt + '|' + hash
+
+
+def check_value(encoded, secret=get_secret()):
+    data, salt, hash = encoded.split('|')
+    value = str(urllib.unquote(data))
+    check_hash = hash_signature(salt, value, secret)
+    if hash != check_hash:
+        ## FIXME: log
+        return None
+    return value
+
+
+def hash_signature(salt, value, secret):
+    hash = hmac.new(str(salt), str(value), hashlib.sha256)
+    hash = hash.digest().encode('base64').replace('\n', '')
+    return hash
 
 
 class Application(object):
@@ -59,6 +109,16 @@ class Application(object):
                  'directory': os.path.join(tmp, 'openid'),
                  }
              })
+        tmp = os.environ['TEMP']
+        self.auth_session_app = SessionMiddleware(
+            self.auth_app,
+            data_dir=os.path.join(tmp, 'beaker'),
+            lock_dir=os.path.join(tmp, 'beaker.lock'),
+            type='cookie',
+            cookie_expires=False,
+            encrypt_key=get_secret(),
+            validate_key=get_secret(),
+            )
         self.debug = not is_production()
         self.store = SQLStore.from_silver()
 
@@ -73,7 +133,7 @@ class Application(object):
             return self.set_time(req)
         if req.path_info_peek() == 'auth':
             req.path_info_pop()
-            return self.auth_app
+            return self.auth_session_app
         if req.path_info == '/.create-database':
             ## FIXME: and internal check
             return self.create_database(req)
@@ -94,7 +154,7 @@ class Application(object):
         import itertools
         new_time = itertools.count(1).next
         time.time = new_time
-        return exc.HTTPNoContent();
+        return exc.HTTPNoContent()
 
     _data_app_re = re.compile(r'/data/\{(.*?)\}')
 
@@ -158,7 +218,7 @@ class Application(object):
 
     def success(self, req):
         token = req.POST['token']
-        req.session['user_token'] = token
+        #req.session['user_token'] = token
         dest = urlparse.urljoin(req.url, '/auth/auth_info')
         api_params = dict(
             token=token,
@@ -166,14 +226,19 @@ class Application(object):
             )
         http_response = urllib2.urlopen(dest, urllib.urlencode(api_params))
         auth_info = json.loads(http_response.read())
-        req.user_info = auth_info['profile']
-        return exc.HTTPFound(location='/')
+        #req.session.delete()
+        resp = exc.HTTPFound(location='/')
+        set_user_info(resp, auth_info['profile'])
+        resp.delete_cookie('beaker.session.id')
+        return resp
 
     def logout(self, req):
-        req.session.delete()
+        #req.session.delete()
         came_from = urlparse.urljoin(
             req.application_url, req.params.get('came_from', '/'))
-        return exc.HTTPFound(location=came_from)
+        resp = exc.HTTPFound(location=came_from)
+        resp.delete_cookie('user_info')
+        return resp
 
     def login_status(self, req):
         return self.json_response(req.user_info)
@@ -186,18 +251,19 @@ class Application(object):
             content_type='application/json',
             **kw)
 
+
 def make_app():
     app = Application()
-    tmp = os.environ['TEMP']
-    app = SessionMiddleware(
-        app,
-        data_dir=os.path.join(tmp, 'beaker'),
-        lock_dir=os.path.join(tmp, 'beaker.lock'),
-        type='cookie',
-        cookie_expires=False,
-        encrypt_key=get_secret(),
-        validate_key=get_secret(),
-        # Signs, but does not encrypt the cookie:
-        #secret=get_secret(),
-        )
+    #tmp = os.environ['TEMP']
+    #app = SessionMiddleware(
+    #    app,
+    #    data_dir=os.path.join(tmp, 'beaker'),
+    #    lock_dir=os.path.join(tmp, 'beaker.lock'),
+    #    type='cookie',
+    #    cookie_expires=False,
+    #    encrypt_key=get_secret(),
+    #    validate_key=get_secret(),
+    #    # Signs, but does not encrypt the cookie:
+    #    #secret=get_secret(),
+    #    )
     return app
