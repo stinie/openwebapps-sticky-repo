@@ -1,6 +1,13 @@
 <html>
 <head>
 <title>Login</title>
+<script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.4.4/jquery.js"></script>
+<script type="text/javascript">
+$(function () {
+  $('input[name=end_point]').val(
+    location.protocol + '//' + location.host + '/success');
+});
+</script>
 </head>
 
 <body>
