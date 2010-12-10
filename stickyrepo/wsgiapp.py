@@ -5,8 +5,8 @@ from webob import exc
 import webob
 from velruse.app import VelruseApp
 from beaker.middleware import SessionMiddleware
-from silversupport.secret import get_secret
-from silversupport.env import is_production
+from stickyrepo.env import get_secret
+from stickyrepo.env import is_production
 import urlparse
 import urllib
 import urllib2
