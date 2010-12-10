@@ -1,0 +1,3 @@
+[submodule "silver/velruse"]
+	path = silver/velruse
+	url = http://github.com/ianb/velruse.git
