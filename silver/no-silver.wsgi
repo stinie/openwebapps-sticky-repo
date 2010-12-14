@@ -1,6 +1,7 @@
 import os
 import site
 import sys
+import commands
 
 here = os.path.dirname(os.path.abspath(__file__))
 base = os.path.dirname(here)
@@ -12,10 +13,11 @@ from stickyrepo.wsgiapp import make_app as sticky_make_app
 
 if not os.environ.get('CONNECTIONS'):
     raise Exception('You must set $CONNECTIONS (to the path of connections.py')
-ns = {}
-execfile(os.environ['CONNECTIONS'], ns)
+filename = os.environ['CONNECTIONS']
+ns = {'__file__': filename}
+execfile(filename, ns)
 vars = ns['env_vars']
-hostname = subprocess.check_output('hostname').strip()
+hostname = commands.getoutput('hostname').strip()
 for name, value in vars[hostname].items():
     os.environ[name] = value
 
