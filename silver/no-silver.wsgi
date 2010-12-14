@@ -10,6 +10,15 @@ sys.path.insert(0, base)
 
 from stickyrepo.wsgiapp import make_app as sticky_make_app
 
+if not os.environ.get('CONNECTIONS'):
+    raise Exception('You must set $CONNECTIONS (to the path of connections.py')
+ns = {}
+execfile(os.environ['CONNECTIONS'], ns)
+vars = ns['env_vars']
+hostname = subprocess.check_output('hostname').strip()
+for name, value in vars[hostname].items():
+    os.environ[name] = value
+
 if not os.environ.get('CONFIG_MYSQL_SQLALCHEMY'):
     raise Exception('You must set $CONFIG_MYSQL_SQLALCHEMY')
 if not os.environ.get('SILVER_APP_CONFIG'):
