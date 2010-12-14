@@ -1,3 +1,4 @@
 *.egg-info
 *.pyc
 silver/default-config/local.yaml
+test.db
