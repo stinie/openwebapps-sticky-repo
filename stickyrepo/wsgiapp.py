@@ -10,6 +10,7 @@ from stickyrepo.env import is_production
 import urlparse
 import urllib
 import urllib2
+import httplib2
 try:
     import simplejson as json
 except ImportError:
@@ -145,7 +146,7 @@ class Application(object):
             return self.login_status(req)
         if not req.userid:
             raise exc.HTTPTemporaryRedirect(
-                location='/login/')
+                location='/login.html')
         resp = self.data_app(req)
         resp.headers['X-Server-Timestamp'] = '%.3f' % req.server_timestamp
         return resp
@@ -224,16 +225,26 @@ class Application(object):
 
     def success(self, req):
         token = req.POST['token']
+        assert token, 'Empty token'
         #req.session['user_token'] = token
         dest = urlparse.urljoin(req.url, '/auth/auth_info')
         api_params = dict(
             token=token,
             format='json',
             )
-        http_response = urllib2.urlopen(dest, urllib.urlencode(api_params))
-        auth_info = json.loads(http_response.read())
-        #req.session.delete()
+        headers, http_response = httplib2.Http().request(dest, 'POST', str(urllib.urlencode(api_params)))
+        try:
+            auth_info = json.loads(http_response)
+        except:
+            print >> req.environ['wsgi.errors'], 'Bad JSON: %r' % http_response
+            raise
+        if auth_info.get('status') == 'fail':
+            ## FIXME: not sure what to do here?
+            resp = exc.HTTPFound(location='/?msg=%s' % urllib.quote(auth_info['reason']['description']))
+            return resp
         resp = exc.HTTPFound(location='/')
+        if 'profile' not in auth_info:
+            raise KeyError('No profile in auth_info: %r' % auth_info)
         set_user_info(resp, auth_info['profile'])
         resp.delete_cookie('beaker.session.id')
         return resp
